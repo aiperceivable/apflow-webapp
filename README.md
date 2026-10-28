@@ -180,6 +180,10 @@ The application uses the apflow v2 REST module API to communicate with the apflo
 
 The client requires `apflow>=0.22.1`. That version includes the REST module behavior and JSON-safe datetime serialization needed by the task detail and scheduler pages.
 
+On apflow 0.24.x, failed root tasks are retried using `run.retry` and the new root is submitted with `task.submit`. The server must have an active dispatcher; the REST server starts one automatically. Retrying on older servers that do not expose these modules is unavailable.
+
+Task creation uses `params.executor_id` to select an executor. Legacy `schemas.method` is converted to that field; other `schemas` fields are rejected because the REST creation API does not preserve them. Executor suggestions come from modules whose IDs end in `_executor`; custom IDs can also be entered manually.
+
 All API methods are available through the `apiClient` instance:
 
 ```typescript

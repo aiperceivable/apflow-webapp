@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-10-28
+
+### Added
+
+- Discover available executor suggestions from the connected server, while
+  allowing custom executor IDs to be entered manually.
+
+### Changed
+
+- Create tasks using `params.executor_id`, as supported by apflow 0.24.1.
+  Legacy `schemas.method` is converted to the executor ID; other schema fields
+  are rejected because the REST creation API does not preserve them.
+- Retry failed root tasks with `run.retry`, submit the new root for durable
+  execution, and open the new task. Direct execution and retry controls are
+  hidden for child tasks.
+- Move notifications to the bottom right so they do not obscure task controls.
+
+### Compatibility
+
+- Durable retries require a server exposing `run.retry` and `task.submit` and
+  an active dispatcher. Older servers without these modules cannot use retry.
+
 ## [0.2.2] - 2026-07-18
 
 ### Removed

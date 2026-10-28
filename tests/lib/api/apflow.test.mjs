@@ -197,3 +197,43 @@ test('returns a clear error when server-side LLM key storage is unavailable', as
     /Server-side LLM key storage is not available/
   );
 });
+
+test('retries a failed run and submits its new root for durable execution', async () => {
+  const { AIPartnerUpFlowClient, calls } = loadClient(async (url, body) => {
+    if (url === '/modules/apflow.task.get') return { data: { id: body.task_id, run_id: 'run-1' } };
+    if (url === '/modules/apflow.run.retry') return { data: { run_id: 'run-2', root_task_id: 'root-2' } };
+    if (url === '/modules/apflow.task.submit') return { data: { task_id: body.task_id, state: 'accepted' } };
+    throw new Error(`unexpected ${url}`);
+  });
+  const client = new AIPartnerUpFlowClient('http://localhost:8080');
+  const result = await client.retryTask('root-1', 'retry-key');
+  assert.deepEqual(plain(result), { run_id: 'run-2', root_task_id: 'root-2' });
+  assert.deepEqual(calls.map(c => c.url), ['/modules/apflow.task.get', '/modules/apflow.run.retry', '/modules/apflow.task.submit']);
+  assert.deepEqual(plain(calls[1].body), { run_id: 'run-1', idempotency_key: 'retry-key' });
+  assert.deepEqual(plain(calls[2].body), { task_id: 'root-2' });
+});
+
+test('uses a legacy root id to retry a task without a run id', async () => {
+  const { AIPartnerUpFlowClient, calls } = loadClient(async (url, body) => {
+    if (url.endsWith('task.get')) return { data: { id: 'legacy-root' } };
+    if (url.endsWith('run.retry')) return { data: { run_id: 'r2', root_task_id: 'new-root' } };
+    return { data: { task_id: body.task_id, state: 'accepted' } };
+  });
+  const client = new AIPartnerUpFlowClient();
+  await client.retryTask('legacy-root', 'key');
+  assert.equal(calls[1].body.run_id, 'legacy-root');
+});
+
+test('preserves selected executors using the supported task creation contract', async () => {
+  const { AIPartnerUpFlowClient, calls } = loadClient(async () => ({ data: { root_task_id: 'one', task_count: 1, task_ids: ['one'] } }));
+  const client = new AIPartnerUpFlowClient();
+  await client.createTasks({ id: 'one', name: 'Example', schemas: { method: 'aggregate_results_executor' }, params: { option: true } });
+  assert.deepEqual(plain(calls[0].body), { tasks: [{ id: 'one', name: 'Example', params: { option: true, executor_id: 'aggregate_results_executor' } }] });
+});
+
+test('refuses unsupported task schema fields rather than silently losing them', async () => {
+  const { AIPartnerUpFlowClient, calls } = loadClient(async () => { throw new Error('must not send'); });
+  const client = new AIPartnerUpFlowClient();
+  await assert.rejects(() => client.createTasks({ id: 'one', name: 'Example', schemas: { method: 'x', input_schema: {} } }), /schema fields.*not supported/i);
+  assert.equal(calls.length, 0);
+});

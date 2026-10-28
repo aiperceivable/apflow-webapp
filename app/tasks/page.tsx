@@ -86,6 +86,17 @@ function TaskListPageContent() {
     },
   });
 
+  const retryMutation = useMutation({
+    mutationFn: (id: string) => apiClient.retryTask(id, crypto.randomUUID()),
+    onSuccess: (retry) => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['running-tasks'] });
+      notifications.show({ title: t('common.success'), message: 'Retry submitted', color: 'green' });
+      router.push(`/tasks?id=${encodeURIComponent(retry.root_task_id)}`);
+    },
+    onError: (error: Error) => notifications.show({ title: t('common.error'), message: error.message, color: 'red' }),
+  });
+
   const executeMutation = useMutation({
     mutationFn: (taskId: string) => {
       // Set executing task ID when execution starts
@@ -324,13 +335,13 @@ function TaskListPageContent() {
                   <IconEye size={16} />
                 </ActionIcon>
               </Tooltip>
-              {(task.status === 'pending' || task.status === 'failed') && (
+              {!task.parent_id && level === 0 && (task.status === 'pending' || task.status === 'failed') && (
                 <Tooltip label={task.status === 'failed' ? 'Retry Task' : 'Execute Task'}>
                   <ActionIcon
                     variant="subtle"
                     color={task.status === 'failed' ? 'orange' : 'blue'}
-                    onClick={() => executeMutation.mutate(task.id)}
-                    loading={isTaskExecuting(task, parentId)}
+                    onClick={() => task.status === 'failed' ? retryMutation.mutate(task.id) : executeMutation.mutate(task.id)}
+                    loading={isTaskExecuting(task, parentId) || retryMutation.isPending}
                   >
                     {task.status === 'failed' ? <IconRefresh size={16} /> : <IconPlayerPlay size={16} />}
                   </ActionIcon>
@@ -476,11 +487,11 @@ function TaskListPageContent() {
           >
             {t('common.back')}
           </Button>
-          {(task.status === 'pending' || task.status === 'failed') && (
+          {!task.parent_id && (task.status === 'pending' || task.status === 'failed') && (
             <Button
               leftSection={task.status === 'failed' ? <IconRefresh size={16} /> : <IconPlayerPlay size={16} />}
-              onClick={() => executeDetailMutation.mutate(taskId)}
-              loading={executeDetailMutation.isPending}
+              onClick={() => task.status === 'failed' ? retryMutation.mutate(taskId) : executeDetailMutation.mutate(taskId)}
+              loading={executeDetailMutation.isPending || retryMutation.isPending}
               color={task.status === 'failed' ? 'orange' : 'blue'}
             >
               {task.status === 'failed' ? 'Retry Task' : 'Execute Task'}

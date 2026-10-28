@@ -1,6 +1,6 @@
 {
   "name": "apflow-webapp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "apflow version>=0.12.0",
   "private": true,
   "scripts": {

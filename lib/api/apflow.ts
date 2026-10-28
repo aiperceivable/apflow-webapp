@@ -7,6 +7,8 @@ const APFLOW_V2_MODULES = new Set([
   'task.create',
   'task.create_tree',
   'task.execute',
+  'task.submit',
+  'run.retry',
   'task.cancel',
   'task.get',
   'task.update',
@@ -30,6 +32,7 @@ const APFLOW_V2_MODULES = new Set([
 
 export interface Task {
   id: string;
+  run_id?: string | null;
   name: string;
   user_id?: string;
   parent_id?: string;
@@ -319,8 +322,26 @@ export class AIPartnerUpFlowClient {
   }
 
   async createTasks(tasks: Task[] | Task): Promise<CreateTaskTreeResponse> {
-    const taskArray = Array.isArray(tasks) ? tasks : [tasks];
+    const taskArray = (Array.isArray(tasks) ? tasks : [tasks]).map((task) => {
+      if (!task.schemas) return task;
+      const { method, ...otherSchemas } = task.schemas;
+      if (Object.keys(otherSchemas).length) {
+        throw new Error('Task schema fields other than method are not supported by the REST creation API');
+      }
+      if (method && task.params?.executor_id && task.params.executor_id !== method) {
+        throw new Error('Executor ID conflicts with schemas.method');
+      }
+      const { schemas: _schemas, ...definition } = task;
+      return { ...definition, params: method ? { ...task.params, executor_id: method } : task.params };
+    });
     return this.moduleRequest<CreateTaskTreeResponse>('apflow.task.create_tree', { tasks: taskArray });
+  }
+
+  async listExecutors(): Promise<Array<{ id: string; description: string }>> {
+    const response = await this.client.get<{ modules: Array<{ module_id: string; description?: string }> }>('/modules');
+    return response.data.modules
+      .filter((module) => module.module_id.endsWith('_executor'))
+      .map((module) => ({ id: module.module_id.replace(/^apflow\./, ''), description: module.description || '' }));
   }
 
   async getTask(taskId: string): Promise<Task> {
@@ -328,6 +349,23 @@ export class AIPartnerUpFlowClient {
       throw new Error('Task ID is required');
     }
     return this.moduleRequest<Task>('apflow.task.get', { task_id: taskId });
+  }
+
+  async retryTask(taskId: string, idempotencyKey: string): Promise<{ run_id: string; root_task_id: string }> {
+    const task = await this.getTask(taskId);
+    if (task.parent_id) {
+      throw new Error('Retry the root task instead of a child task');
+    }
+    const retry = await this.moduleRequest<{ run_id: string; root_task_id: string }>('apflow.run.retry', {
+      run_id: task.run_id || task.id,
+      idempotency_key: idempotencyKey,
+    });
+    try {
+      await this.moduleRequest('apflow.task.submit', { task_id: retry.root_task_id });
+    } catch (error: any) {
+      throw new Error(`Retry created task ${retry.root_task_id}, but submission failed: ${error.message}`);
+    }
+    return retry;
   }
 
   async getTaskDetail(taskId: string): Promise<Task> {

@@ -9,7 +9,7 @@
 import { Container, Title, Button, Card, Stack, TextInput, Select, Textarea, Group, SegmentedControl, Alert } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import { useForm } from '@mantine/form';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient, Task, GenerateTaskResponse } from '@/lib/api/apflow';
 import { useTranslation } from 'react-i18next';
 import { useRouter } from 'next/navigation';
@@ -33,15 +33,6 @@ interface TaskFormValues {
   generatedTaskJson: string;  // For generate mode - generated and editable JSON
 }
 
-// Common executors
-const COMMON_EXECUTORS = [
-  { value: 'system_info_executor', label: 'System Info Executor', description: 'Query system resources (CPU, memory, disk)' },
-  { value: 'command_executor', label: 'Command Executor', description: 'Execute shell commands' },
-  { value: 'aggregate_results_executor', label: 'Aggregate Results Executor', description: 'Aggregate dependency task results' },
-  { value: 'crewai_executor', label: 'CrewAI Executor', description: 'Execute CrewAI agents and tasks (requires LLM key)' },
-  { value: 'batch_crewai_executor', label: 'Batch CrewAI Executor', description: 'Execute multiple CrewAI tasks in batch' },
-];
-
 export default function CreateTaskPage() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -49,6 +40,7 @@ export default function CreateTaskPage() {
   const isMobile = useMediaQuery('(max-width: 48em)');
   const [mode, setMode] = useState<'simple' | 'advanced' | 'generate'>('simple');
   const [generateStep, setGenerateStep] = useState<'input' | 'review'>('input');
+  const { data: executors = [] } = useQuery({ queryKey: ['executors'], queryFn: () => apiClient.listExecutors() });
 
   const form = useForm<TaskFormValues>({
     initialValues: {
@@ -71,10 +63,7 @@ export default function CreateTaskPage() {
         priority: 2,
         dependencies: null,
         inputs: {},
-        params: null,
-        schemas: {
-          method: ''
-        }
+        params: { executor_id: '' }
       }, null, 2),
       generateDescription: '',
       generatedTaskJson: '',
@@ -349,20 +338,11 @@ export default function CreateTaskPage() {
           }
         }
 
-        // Parse schemas - use custom schemas if provided, otherwise use executor method
-        if (values.schemas && values.schemas.trim() !== '') {
-          task.schemas = JSON.parse(values.schemas);
-        } else {
-          // Default: use executor as method
-          task.schemas = {
-            method: values.executor,
-          };
+        const params = values.params.trim() ? JSON.parse(values.params) : {};
+        if (params.executor_id && params.executor_id !== values.executor) {
+          throw new Error('Executor ID in params must match the selected executor');
         }
-
-        // Add params if provided
-        if (values.params && values.params.trim() !== '') {
-          task.params = JSON.parse(values.params);
-        }
+        task.params = { ...params, executor_id: values.executor };
       }
 
       createMutation.mutate(task);
@@ -380,8 +360,7 @@ export default function CreateTaskPage() {
   const syncToJson = () => {
     try {
       const inputs = form.values.inputs ? JSON.parse(form.values.inputs) : {};
-      const schemas = form.values.schemas ? JSON.parse(form.values.schemas) : { method: form.values.executor };
-      const params = form.values.params ? JSON.parse(form.values.params) : undefined;
+      const params = { ...(form.values.params ? JSON.parse(form.values.params) : {}), executor_id: form.values.executor };
       const dependencies = form.values.dependencies ? JSON.parse(form.values.dependencies) : undefined;
 
       const taskJson: Record<string, unknown> = {
@@ -389,13 +368,12 @@ export default function CreateTaskPage() {
         name: form.values.name,
         priority: form.values.priority,
         inputs,
-        schemas,
+        params,
       };
 
       if (form.values.user_id) taskJson.user_id = form.values.user_id;
       if (form.values.parent_id) taskJson.parent_id = form.values.parent_id;
       if (dependencies && dependencies.length > 0) taskJson.dependencies = dependencies;
-      if (params) taskJson.params = params;
 
       form.setFieldValue('taskJson', JSON.stringify(taskJson, null, 2));
     } catch {
@@ -415,6 +393,7 @@ export default function CreateTaskPage() {
       </Button>
 
       <Title order={1} mb="xl">{t('taskForm.title')}</Title>
+
 
       <Card shadow="sm" padding="lg" radius="md" withBorder>
         <form onSubmit={form.onSubmit(handleSubmit)}>
@@ -545,7 +524,7 @@ export default function CreateTaskPage() {
                 </Alert>
                 <Textarea
                   label="Task JSON"
-                  placeholder='{"id": "", "parent_id": null, "user_id": null, "name": "Task", "status": "pending", "priority": 2, "dependencies": null, "inputs": {}, "params": null, "schemas": {"method": "executor"}}'
+                  placeholder='{"name":"Task","inputs":{},"params":{"executor_id":"aggregate_results_executor"}}'
                   description="Complete task object in JSON format. Must include 'name' field. All fields are optional except 'name'."
                   minRows={40}
                   autosize
@@ -570,15 +549,17 @@ export default function CreateTaskPage() {
                   {...form.getInputProps('name')}
                 />
 
-                <Select
+                <TextInput
                   label={t('taskForm.executor')}
-                  placeholder="Select an executor"
-                  description="Choose the executor to use for this task (will set schemas.method if schemas not provided)"
+                  placeholder="Enter an executor ID"
+                  description="Choose a discovered executor or enter a custom executor ID."
                   required
-                  data={COMMON_EXECUTORS}
-                  searchable
+                  list="available-executors"
                   {...form.getInputProps('executor')}
                 />
+                <datalist id="available-executors">
+                  {executors.map((executor) => <option key={executor.id} value={executor.id}>{executor.description}</option>)}
+                </datalist>
 
                 <Select
                   label={t('taskForm.priority')}
@@ -599,14 +580,6 @@ export default function CreateTaskPage() {
                   minRows={4}
                   required
                   {...form.getInputProps('inputs')}
-                />
-
-                <Textarea
-                  label="Schemas (Optional)"
-                  placeholder='{"method": "system_info_executor", "type": "stdio"}'
-                  description="Task schemas configuration (JSON format). If empty, will use executor as method. Can include method, type, input_schema, output_schema, etc."
-                  minRows={3}
-                  {...form.getInputProps('schemas')}
                 />
 
                 <Textarea

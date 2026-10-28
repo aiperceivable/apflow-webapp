@@ -39,7 +39,7 @@ export default function RootLayout({
             <MantineProvider theme={themeConfig} defaultColorScheme="auto">
               <DatesProvider settings={{}}>
                 <AutoLoginProvider>
-                  <Notifications position="top-right" />
+                  <Notifications position="bottom-right" />
                   <AppShellWrapper>
                     {children}
                   </AppShellWrapper>
